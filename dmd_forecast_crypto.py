@@ -364,3 +364,80 @@ def annotate_heatmap(im, data=None, valfmt="{x:.2f}",
             texts.append(text)
 
     return texts
+
+#%%
+# Trading functions
+# Function to open and close trades for a specific step, according to a forecast, stop loss and take profit defined
+def open_close_positions(trading_pairs, input_steps, future_steps, current_set, current_set_z_score, means, stds, take_profit, stop_loss, position_size, transaction_fee):
+    # Load present symbols
+    global symbols
+    # Start a counter for positions opened an closed during this bar
+    positions_opened = 0
+    positions_closed = 0
+    positions_won = 0
+    historical_pnl = 0
+    # Check for positions in all trading pairs
+    for trading_pair in trading_pairs:
+        pnl = 0
+        index = symbols.index(trading_pair["symbol"])
+        current_price = current_set[:,-1]
+        # If position is closed for current pair, open position
+        if trading_pair["position_tracker"] == "close":
+            trading_pair["entry_price"] = current_price[index]
+            trading_pair["position_tracker"] = "open"
+            # Curate data for forecast
+            data_for_forecast_z_score = current_set_z_score[:,-input_steps:]
+            # Compute A operator from data
+            X, X_prime = build_snapshot_matrices(data_for_forecast_z_score)
+            A, eigenvals, eigenvecs = dmd_full_rank(X, X_prime)
+            # Forecast future steps given the input steps and reverse transform
+            forecasted_results_z_score = forecast(A, data_for_forecast_z_score, future_steps)
+            forecasted_results = reverse_z_scores(forecasted_results_z_score, current_price, means, stds)
+            forecasted_price = forecasted_results[:,-1]
+            if forecasted_price[index] > trading_pair["entry_price"]:
+                trading_pair["position_type"] = "long"
+                positions_opened += 1
+                print(f"{trading_pair["symbol"]} long opened - entry price: {trading_pair["entry_price"]}")
+            elif forecasted_price[index] < trading_pair["entry_price"]:
+                trading_pair["position_type"] = "short"
+                positions_opened += 1
+                print(f"{trading_pair["symbol"]} short opened - entry price: {trading_pair["entry_price"]}")
+            else:
+                trading_pair["position_type"] = None
+        # If there are open positions, check to see if they can be closed and get PNL
+        elif trading_pair["position_tracker"] == "open":
+            match trading_pair["position_type"]:
+                case "long":
+                    pnl = (current_price[index] - trading_pair["entry_price"]) / trading_pair["entry_price"] * position_size - transaction_fee
+                    if pnl >= take_profit:
+                        trading_pair["position_tracker"] = "close"
+                        trading_pair["pnl"] += pnl
+                        positions_closed += 1
+                        print(f"{trading_pair["symbol"]} long closed - closing price: {current_price[index]} - entry price: {trading_pair["entry_price"]} - pnl: {pnl}")
+                        positions_won += 1
+                    elif pnl <= -stop_loss:
+                        trading_pair["position_tracker"] = "close"
+                        trading_pair["pnl"] += pnl
+                        positions_closed += 1
+                        print(f"{trading_pair["symbol"]} long closed - closing price: {current_price[index]} - entry price: {trading_pair["entry_price"]} - pnl: {pnl}")
+                    else:
+                        pnl = 0
+                case "short":
+                    pnl = (trading_pair["entry_price"] - current_price[index]) / trading_pair["entry_price"] * position_size - transaction_fee
+                    if pnl >= take_profit:
+                        trading_pair["position_tracker"] = "close"
+                        trading_pair["pnl"] += pnl
+                        positions_closed += 1
+                        print(f"{trading_pair["symbol"]} short closed - closing price: {current_price[index]} - entry price: {trading_pair["entry_price"]} - pnl: {pnl}")
+                        positions_won += 1
+                    elif pnl <= -stop_loss:
+                        trading_pair["position_tracker"] = "close"
+                        trading_pair["pnl"] += pnl
+                        positions_closed += 1
+                        print(f"{trading_pair["symbol"]} short closed - closing price: {current_price[index]} - entry price: {trading_pair["entry_price"]} - pnl: {pnl}")
+                    else:
+                        pnl = 0
+                case None:
+                    pnl = 0
+        historical_pnl += pnl
+    return trading_pairs, positions_opened, positions_closed, positions_won, historical_pnl
