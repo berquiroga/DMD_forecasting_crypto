@@ -441,3 +441,91 @@ def open_close_positions(trading_pairs, input_steps, future_steps, current_set, 
                     pnl = 0
         historical_pnl += pnl
     return trading_pairs, positions_opened, positions_closed, positions_won, historical_pnl
+
+# %%
+# Algorithm 1
+"""
+This algorithm uses a sliding window on a slice of the whole set, in which computes the
+best input/future steps combination to be used in the exact following bar. This sliding
+window is then updated and another combination computed. Repeat until all set has been
+tested.
+"""
+# Set the symbols and timeframe
+symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "BNBUSDT", "1000PEPEUSDT"]
+timeframe = "1h"
+
+# Get the data only for the defined symbols in the defined timeframe
+symbols_historical_data = get_symbols_data(symbols, timeframe)
+whole_set_length = symbols_historical_data.shape[1]
+
+# Compute the log returns of the data and normalize
+symbols_log_returns = compute_log_returns(symbols_historical_data)
+symbols_z_score, symbols_means, symbols_stds = get_z_scores(symbols_log_returns)
+
+# Define trading parameters
+positions_opened = 0
+positions_closed = 0
+winning_positions = 0
+historical_pnl = []
+account_size = 500 # 500$ initial capital
+risk_reward_ratio = 0.333 ## RR ratio of 3
+take_profit = 0.05 * account_size
+stop_loss = take_profit * risk_reward_ratio
+transaction_fee = 1 # 1$ transaction fee
+leverage = 20 # 10x leverage
+margin = 50 # Margin in each position
+position_size = margin * leverage
+
+# Generate a position tracker dictionary and best mp and mf combination
+trading_pairs = []
+for symbol in symbols:
+    position = {
+        "symbol": symbol,
+        "position_tracker": "close",
+        "entry_price": None,
+        "position_type": None,
+        "pnl": 0,
+        }
+    trading_pairs.append(position)
+
+# Define a sliding window of steps where a training will occur to get best input/future steps combination
+sliding_window_steps = 100
+forecasting_length = whole_set_length - sliding_window_steps
+for n in range(forecasting_length):
+    print(f"Forecasting bar: {n}")
+    # Slice the training set from the historical set
+    forecasting_set = symbols_historical_data[:, n + 1:sliding_window_steps + n + 1]
+    forecasting_set_z_score = symbols_z_score[:, n:sliding_window_steps + n]
+    
+    # Define input/future steps and compute the combination with higher success rate over training set
+    input_steps = 25
+    future_steps = 10
+    all_combinations_success_rates = compute_all_combinations_success_rates(forecasting_set_z_score, forecasting_set, symbols_means, symbols_stds, input_steps, future_steps)
+    all_combinations_success_matrix, higher_average_success_rate = compute_average_success_rate_matrix(all_combinations_success_rates)
+    print(higher_average_success_rate)
+    trading_pairs, opened, closed, won, pnl = open_close_positions(trading_pairs=trading_pairs,
+                                                                    input_steps=higher_average_success_rate["input"],
+                                                                    future_steps=higher_average_success_rate["future"],
+                                                                    current_set=forecasting_set,
+                                                                    current_set_z_score=forecasting_set_z_score,
+                                                                    means=symbols_means,
+                                                                    stds=symbols_stds,
+                                                                    take_profit=take_profit,
+                                                                    stop_loss=stop_loss,
+                                                                    position_size=position_size,
+                                                                    transaction_fee=transaction_fee
+                                                                    )
+    positions_opened += opened
+    positions_closed += closed
+    winning_positions += won
+    account_size += pnl
+    historical_pnl.append(account_size)
+# Compute overall Win/Loss ratio
+win_loss_ratio = winning_positions / positions_closed
+
+# Plot results
+fig, ax = plt.subplots()
+ax.set_title(f"Historical PNL - {timeframe}\n Win-Loss Ratio: {win_loss_ratio:.2f}")
+ax.plot(historical_pnl)
+ax.grid(True, linestyle='-.')
+# %%
