@@ -60,3 +60,33 @@ def get_z_scores(log_returns):
         for j in range(columns_log_returns):
             z_scores[i,j] = (log_returns[i,j] - means[i]) / stds[i]
     return z_scores, means, stds
+
+#%%
+# Build Snapshots required to forecast
+# Build X and X' snapshot matrices from normalized data
+def build_snapshot_matrices(z_score_normalized_data):
+    X = z_score_normalized_data[:, :-1]
+    X_prime = z_score_normalized_data[:, 1:]
+    return X, X_prime
+
+#%%
+# DMD functions
+# Function to perform a full rank DMD if low rank matrix
+def dmd_full_rank(X, X_prime):
+    A = X_prime @ np.linalg.pinv(X)
+    eigvals, eigvecs = np.linalg.eig(A)
+    return A, eigvals, eigvecs
+    
+
+# Function to perform a truncated DMD with SVD if high rank matrix
+def dmd_low_rank(X, X_prime, r):
+    U, S, Vh = np.linalg.svd(X)
+    U_r = U[:, 0:r]
+    S_r = np.diag(S[0:r])
+    V = Vh.T.conj()
+    V_r = V[:, 0:r]
+    # Build A tilde and DMD modes
+    A_tilde = U_r.T @ X_prime @ V_r @ np.linalg.inv(S_r)
+    eigvals, W = np.linalg.eig(A_tilde) # Eigenvalues and eigenvectors
+    eigvecs = X_prime @ V_r @ np.linalg.inv(S_r) @ W # DMD modes
+    return A_tilde, eigvals, eigvecs
